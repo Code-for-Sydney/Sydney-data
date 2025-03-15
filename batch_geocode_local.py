@@ -1,9 +1,9 @@
 import polars as pl
 import requests
 import logging
-from tqdm import tqdm
-import concurrent.futures
 import os
+import queue
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -15,21 +15,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 logger.info("Starting geocoding process")
-df = pl.read_csv("sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")[:10000]
+df = pl.read_csv("sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")[:1000]
 logger.info(f"Loaded {len(df)} properties to geocode")
 
-# Create a session to reuse HTTP connections
-session = requests.Session()
-
-def geocode_address(combined_address:str, cache:dict, session:requests.Session, base_url="http://localhost:8080"):
+def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
     """Geocode a single address using local Nominatim."""
-    # Use the combined address directly as the cache key
-    cache_key = combined_address
-    
-    # Check if this address is already in the cache
-    if cache_key in cache:
-        return cache_key, cache[cache_key]
-    
     params = {
         'q': combined_address,
         'format': 'json',
@@ -43,27 +33,36 @@ def geocode_address(combined_address:str, cache:dict, session:requests.Session, 
             results = response.json()
             if results and len(results) > 0:
                 lat, lon = float(results[0]['lat']), float(results[0]['lon'])
-                # Store the result in the cache
-                cache[cache_key] = (lat, lon)
-                return cache_key, (lat, lon)
+                return combined_address, (lat, lon)
             logger.warning(f"No results found for {combined_address}")
         else:
             logger.error(f"Error {response.status_code} for {combined_address}")
-        # Cache the failure too to avoid repeated API calls for failed addresses
-        cache[cache_key] = (None, None)
-        return cache_key, (None, None)
+        return combined_address, (None, None)
     except Exception as e:
         logger.error(f"Exception during geocoding {combined_address}: {str(e)}")
-        return cache_key, (None, None)
+        return combined_address, (None, None)
 
-def process_batch(batch, cache, base_url):
-    """Process a batch of addresses with a new session."""
+def worker(address_queue, results_dict, results_lock, base_url="http://localhost:8080"):
+    """Worker function that processes addresses from a queue."""
     local_session = requests.Session()
-    results = {}
-    for combined_address in batch:
-        cache_key, coords = geocode_address(combined_address, cache, local_session, base_url)
-        results[cache_key] = coords
-    return results
+    while True:
+        try:
+            # Get the next address from the queue (non-blocking)
+            combined_address = address_queue.get_nowait()
+            # Process the address
+            address_key, coords = geocode_address(combined_address, local_session, base_url)
+            # Store the result in the shared results dictionary
+            with results_lock:
+                results_dict[address_key] = coords
+            # Mark the task as done
+            address_queue.task_done()
+        except queue.Empty:
+            # No more addresses to process
+            break
+        except Exception as e:
+            logger.error(f"Error processing address: {str(e)}")
+            # Ensure task is marked as done even in case of error
+            address_queue.task_done()
 
 # Get the number of available CPU cores (workers)
 num_workers = os.cpu_count() or 4
@@ -71,27 +70,32 @@ logger.info(f"Using {num_workers} workers for parallel geocoding")
 
 # Prepare data with combined addresses directly
 combined_addresses = [f"{row['address']} {str(row['post_code'])}" for row in df.iter_rows(named=True)]
+logger.info(f"Prepared {len(combined_addresses)} addresses for geocoding")
 
-# Calculate batch size based on number of addresses and workers
-batch_size = max(1, len(combined_addresses) // (num_workers * 2))
-batches = [combined_addresses[i:i + batch_size] for i in range(0, len(combined_addresses), batch_size)]
-logger.info(f"Split {len(combined_addresses)} addresses into {len(batches)} batches of ~{batch_size} each")
+# Create a thread-safe queue and populate it with addresses
+address_queue = queue.Queue()
+for addr in combined_addresses:
+    address_queue.put(addr)
 
-# Create a shared cache for all workers
-geocode_cache = {}
-
-# Process batches in parallel
+# Create results dictionary with lock for thread safety
 results = {}
-with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-    # Create a progress bar for the batches
-    futures = {executor.submit(process_batch, batch, geocode_cache, "http://localhost:8080"): i 
-               for i, batch in enumerate(batches)}
-    
-    with tqdm(total=len(batches), desc="Processing batches", unit="batch") as pbar:
-        for future in concurrent.futures.as_completed(futures):
-            batch_results = future.result()
-            results.update(batch_results)
-            pbar.update(1)
+results_lock = threading.Lock()
+
+# Create and start worker threads
+threads = []
+for _ in range(num_workers):
+    thread = threading.Thread(
+        target=worker,
+        args=(address_queue, results, results_lock, "http://localhost:8080")
+    )
+    thread.daemon = True
+    thread.start()
+    threads.append(thread)
+
+# Wait for all addresses to be processed
+logger.info("Processing addresses...")
+address_queue.join()
+logger.info("All addresses processed")
 
 # Extract results
 success_count = 0
@@ -115,6 +119,5 @@ simplified_df = pl.DataFrame({
 })
 
 logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(df)} properties ({success_count/len(df)*100:.2f}%)")
-logger.info(f"Cache hits: {len(geocode_cache)} unique addresses processed")
 simplified_df.write_csv("sydney_property_data_geocoded.csv", separator="\t")
 logger.info("Saved geocoded data to sydney_property_data_geocoded.csv")
