@@ -5,15 +5,18 @@ import os
 import queue
 import threading
 import time
+import sys
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='geocoding.log',
-    filemode='w'
-)
+# Configure logging to console only
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Add console handler to display logs
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
 logger.info("Starting geocoding process")
 df = pl.read_csv("sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")[:1000]
@@ -35,7 +38,8 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
             if results and len(results) > 0:
                 lat, lon = float(results[0]['lat']), float(results[0]['lon'])
                 return combined_address, (lat, lon)
-            logger.warning(f"No results found for {combined_address}")
+            else:
+                logger.warning(f"No results found for {combined_address} got {results}")
         else:
             logger.error(f"Error {response.status_code} for {combined_address}")
         return combined_address, (None, None)
@@ -43,7 +47,7 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
         logger.error(f"Exception during geocoding {combined_address}: {str(e)}")
         return combined_address, (None, None)
 
-def worker(address_queue, results_dict, results_lock, counter, counter_lock, total_count, base_url="http://localhost:8080"):
+def worker(address_queue, results_dict, results_lock, base_url="http://localhost:8080"):
     """Worker function that processes addresses from a queue."""
     local_session = requests.Session()
     while True:
@@ -55,17 +59,6 @@ def worker(address_queue, results_dict, results_lock, counter, counter_lock, tot
             # Store the result in the shared results dictionary
             with results_lock:
                 results_dict[address_key] = coords
-            
-            # Update progress counter
-            with counter_lock:
-                counter[0] += 1
-                current = counter[0]
-                # Log progress every 5% or at least every 100 addresses
-                log_interval = max(min(total_count // 20, 100), 1)
-                if current % log_interval == 0 or current == total_count:
-                    percentage = (current / total_count) * 100
-                    logger.info(f"Progress: {current}/{total_count} addresses processed ({percentage:.1f}%)")
-            
             # Mark the task as done
             address_queue.task_done()
         except queue.Empty:
@@ -75,9 +68,6 @@ def worker(address_queue, results_dict, results_lock, counter, counter_lock, tot
             logger.error(f"Error processing address: {str(e)}")
             # Ensure task is marked as done even in case of error
             address_queue.task_done()
-            # Still update counter for failed attempts
-            with counter_lock:
-                counter[0] += 1
 
 # Get the number of available CPU cores (workers)
 num_workers = os.cpu_count() or 4
@@ -96,10 +86,6 @@ for addr in combined_addresses:
 results = {}
 results_lock = threading.Lock()
 
-# Create a counter to track progress [counter value]
-progress_counter = [0]  # Using a list as a mutable container
-counter_lock = threading.Lock()
-
 # Create and start worker threads
 threads = []
 total_addresses = len(combined_addresses)
@@ -109,7 +95,7 @@ logger.info(f"Starting geocoding of {total_addresses} addresses with {num_worker
 for _ in range(num_workers):
     thread = threading.Thread(
         target=worker,
-        args=(address_queue, results, results_lock, progress_counter, counter_lock, total_addresses, "http://localhost:8080")
+        args=(address_queue, results, results_lock, "http://localhost:8080")
     )
     thread.daemon = True
     thread.start()
