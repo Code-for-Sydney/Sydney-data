@@ -25,7 +25,7 @@ logger.info(f"Loaded {len(df)} properties to geocode")
 def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
     """Geocode a single address using local Nominatim."""
     params = {
-        'q': combined_address,
+        'q': combined_address + ", NSW, Australia",  # Add NSW (New South Wales) to the query
         'format': 'json',
         'countrycodes': 'au',  # Limit to Australia
         'limit': 1  # Just get the top result
@@ -39,7 +39,8 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
                 lat, lon = float(results[0]['lat']), float(results[0]['lon'])
                 return combined_address, (lat, lon)
             else:
-                logger.warning(f"No results found for {combined_address} got {results}")
+                pass
+                #logger.warning(f"No results found for {combined_address} got {results}")
         else:
             logger.error(f"Error {response.status_code} for {combined_address}")
         return combined_address, (None, None)
@@ -121,8 +122,6 @@ for combined_address in combined_addresses:
     lon_values.append(lon)
     if lat is not None and lon is not None:
         success_count += 1
-    else:
-        logger.warning(f"Failed to geocode {combined_address}")
 
 # Create a simplified dataframe with just the combined address and coordinates
 simplified_df = pl.DataFrame({
