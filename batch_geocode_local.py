@@ -4,6 +4,7 @@ import logging
 import os
 import queue
 import threading
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -42,7 +43,7 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
         logger.error(f"Exception during geocoding {combined_address}: {str(e)}")
         return combined_address, (None, None)
 
-def worker(address_queue, results_dict, results_lock, base_url="http://localhost:8080"):
+def worker(address_queue, results_dict, results_lock, counter, counter_lock, total_count, base_url="http://localhost:8080"):
     """Worker function that processes addresses from a queue."""
     local_session = requests.Session()
     while True:
@@ -54,6 +55,17 @@ def worker(address_queue, results_dict, results_lock, base_url="http://localhost
             # Store the result in the shared results dictionary
             with results_lock:
                 results_dict[address_key] = coords
+            
+            # Update progress counter
+            with counter_lock:
+                counter[0] += 1
+                current = counter[0]
+                # Log progress every 5% or at least every 100 addresses
+                log_interval = max(min(total_count // 20, 100), 1)
+                if current % log_interval == 0 or current == total_count:
+                    percentage = (current / total_count) * 100
+                    logger.info(f"Progress: {current}/{total_count} addresses processed ({percentage:.1f}%)")
+            
             # Mark the task as done
             address_queue.task_done()
         except queue.Empty:
@@ -63,6 +75,9 @@ def worker(address_queue, results_dict, results_lock, base_url="http://localhost
             logger.error(f"Error processing address: {str(e)}")
             # Ensure task is marked as done even in case of error
             address_queue.task_done()
+            # Still update counter for failed attempts
+            with counter_lock:
+                counter[0] += 1
 
 # Get the number of available CPU cores (workers)
 num_workers = os.cpu_count() or 4
@@ -81,12 +96,20 @@ for addr in combined_addresses:
 results = {}
 results_lock = threading.Lock()
 
+# Create a counter to track progress [counter value]
+progress_counter = [0]  # Using a list as a mutable container
+counter_lock = threading.Lock()
+
 # Create and start worker threads
 threads = []
+total_addresses = len(combined_addresses)
+start_time = time.time()
+logger.info(f"Starting geocoding of {total_addresses} addresses with {num_workers} workers")
+
 for _ in range(num_workers):
     thread = threading.Thread(
         target=worker,
-        args=(address_queue, results, results_lock, "http://localhost:8080")
+        args=(address_queue, results, results_lock, progress_counter, counter_lock, total_addresses, "http://localhost:8080")
     )
     thread.daemon = True
     thread.start()
@@ -96,6 +119,10 @@ for _ in range(num_workers):
 logger.info("Processing addresses...")
 address_queue.join()
 logger.info("All addresses processed")
+elapsed_time = time.time() - start_time
+logger.info(f"Total processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+addresses_per_second = total_addresses / elapsed_time if elapsed_time > 0 else 0
+logger.info(f"Processing speed: {addresses_per_second:.2f} addresses/second")
 
 # Extract results
 success_count = 0
