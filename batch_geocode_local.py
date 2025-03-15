@@ -19,7 +19,7 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 logger.info("Starting geocoding process")
-df = pl.read_csv("sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")[:1000]
+df = pl.read_csv("sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")
 logger.info(f"Loaded {len(df)} properties to geocode")
 
 def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
