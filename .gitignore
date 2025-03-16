@@ -1,4 +1,8 @@
+# large files dir
+large-files/*
+
 # Python bytecode
+
 __pycache__/
 *.py[cod]
 *$py.class
@@ -38,11 +42,6 @@ htmlcov/
 *.log
 logs/
 
-# Local data files
-*.csv
-*.xlsx
-*.db
-*.sqlite3
 
 # OS specific
 .DS_Store
