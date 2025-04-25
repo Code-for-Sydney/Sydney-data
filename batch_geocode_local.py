@@ -34,16 +34,13 @@ try:
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
     redis_client.ping()  # Test connection
     logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-    redis_available = True
 except Exception as e:
-    logger.warning(f"Could not connect to Redis: {e}. Continuing without caching.")
-    redis_available = False
+    logger.error(f"Failed to connect to Redis at {REDIS_HOST}:{REDIS_PORT}: {e}")
+    logger.error("This script requires Redis to be running. Please start Redis and try again.")
+    sys.exit(1)
 
 def get_cached_coordinates(address):
     """Get cached coordinates from Redis if available."""
-    if not redis_available:
-        return None
-    
     try:
         cached_data = redis_client.get(f"geocode:{address}")
         if cached_data:
@@ -51,13 +48,14 @@ def get_cached_coordinates(address):
             logger.debug(f"Cache hit for {address}")
             return lat, lon
     except Exception as e:
-        logger.warning(f"Error retrieving from cache: {e}")
+        logger.error(f"Error retrieving from cache: {e}")
+        raise  # Re-raise the exception to fail fast
     
     return None
 
 def cache_coordinates(address, lat, lon):
     """Cache coordinates in Redis."""
-    if not redis_available or lat is None or lon is None:
+    if lat is None or lon is None:
         return
     
     try:
@@ -68,7 +66,8 @@ def cache_coordinates(address, lat, lon):
         )
         logger.debug(f"Cached coordinates for {address}")
     except Exception as e:
-        logger.warning(f"Error caching coordinates: {e}")
+        logger.error(f"Error caching coordinates: {e}")
+        raise  # Re-raise the exception to fail fast
 
 def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
     """Geocode a single address using local Nominatim."""
