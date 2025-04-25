@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "geopy>=2.4.1",
+    "h3>=4.2.2",
     "jupyter>=1.1.1",
     "nominatim-api>=5.0.0",
     "nominatim-db>=5.0.0",

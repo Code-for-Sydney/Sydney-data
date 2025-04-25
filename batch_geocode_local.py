@@ -7,6 +7,8 @@ import threading
 import time
 import sys
 
+from addr_utils import strip_unit
+
 # Configure logging to console only
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -19,11 +21,12 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 logger.info("Starting geocoding process")
-df = pl.read_csv("sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")
+df = pl.read_csv("large-files/sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")
 logger.info(f"Loaded {len(df)} properties to geocode")
 
 def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
     """Geocode a single address using local Nominatim."""
+    combined_address = strip_unit(combined_address)
     params = {
         'q': combined_address + ", NSW, Australia",  # Add NSW (New South Wales) to the query
         'format': 'json',
@@ -131,5 +134,5 @@ simplified_df = pl.DataFrame({
 })
 
 logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(df)} properties ({success_count/len(df)*100:.2f}%)")
-simplified_df.write_csv("sydney_property_data_geocoded.csv", separator="\t")
-logger.info("Saved geocoded data to sydney_property_data_geocoded.csv")
+simplified_df.write_csv("sydney_property_data_geocoded_no_unit.csv", separator="\t")
+logger.info("Saved geocoded data to sydney_property_data_geocoded_no_unit.csv")
