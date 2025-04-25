@@ -72,16 +72,13 @@ def cache_coordinates(address, lat, lon):
 
 def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
     """Geocode a single address using local Nominatim."""
-    stripped_address = strip_unit(combined_address)
-    print(stripped_address, combined_address)
-    
     # Check cache first
-    cached_coords = get_cached_coordinates(stripped_address)
+    cached_coords = get_cached_coordinates(combined_address)
     if cached_coords:
-        return stripped_address, cached_coords
+        return combined_address, cached_coords
     
     params = {
-        'q': stripped_address + ", NSW, Australia",  # Add NSW (New South Wales) to the query
+        'q': combined_address + ", NSW, Australia",  # Add NSW (New South Wales) to the query
         'format': 'json',
         'countrycodes': 'au',  # Limit to Australia
         'limit': 1  # Just get the top result
@@ -94,17 +91,17 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
             if results and len(results) > 0:
                 lat, lon = float(results[0]['lat']), float(results[0]['lon'])
                 # Cache the successful result
-                cache_coordinates(stripped_address, lat, lon)
-                return stripped_address, (lat, lon)
+                cache_coordinates(combined_address, lat, lon)
+                return combined_address, (lat, lon)
             else:
                 pass
                 #logger.warning(f"No results found for {combined_address} got {results}")
         else:
             logger.error(f"Error {response.status_code} for {combined_address}")
-        return stripped_address, (None, None)
+        return combined_address, (None, None)
     except Exception as e:
         logger.error(f"Exception during geocoding {combined_address}: {str(e)}")
-        return stripped_address, (None, None)
+        return combined_address, (None, None)
 
 def worker(address_queue, results_dict, results_lock, base_url="http://localhost:8080"):
     """Worker function that processes addresses from a queue."""
@@ -145,12 +142,20 @@ def main():
     
     logger.info(f"Loaded {len(df)} properties to geocode")
 
+    # Strip unit numbers from addresses when preparing the data
+    logger.info("Stripping unit numbers from addresses...")
+    stripped_addresses = []
+    for row in df.iter_rows(named=True):
+        address = row['address']
+        stripped_address = strip_unit(address)
+        stripped_addresses.append(f"{stripped_address} {str(row['post_code'])}")
+    
     # Get the number of available CPU cores (workers)
     num_workers = os.cpu_count() or 4
     logger.info(f"Using {num_workers} workers for parallel geocoding")
 
-    # Prepare data with combined addresses directly
-    combined_addresses = [f"{row['address']} {str(row['post_code'])}" for row in df.iter_rows(named=True)]
+    # Prepare data with stripped addresses
+    combined_addresses = stripped_addresses
     logger.info(f"Prepared {len(combined_addresses)} addresses for geocoding")
 
     # Create a thread-safe queue and populate it with addresses
