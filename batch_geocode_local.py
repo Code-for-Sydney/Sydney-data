@@ -8,6 +8,7 @@ import time
 import sys
 import json
 import redis
+import argparse
 
 from addr_utils import strip_unit
 
@@ -72,6 +73,7 @@ def cache_coordinates(address, lat, lon):
 def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
     """Geocode a single address using local Nominatim."""
     stripped_address = strip_unit(combined_address)
+    print(stripped_address, combined_address)
     
     # Check cache first
     cached_coords = get_cached_coordinates(stripped_address)
@@ -128,8 +130,19 @@ def worker(address_queue, results_dict, results_lock, base_url="http://localhost
 
 def main():
     """Main function to run the geocoding process."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Geocode addresses from a CSV file.')
+    parser.add_argument('--limit', type=int, help='Limit the number of addresses to process (for testing)')
+    args = parser.parse_args()
+
     logger.info("Starting geocoding process")
     df = pl.read_csv("large-files/sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")
+    
+    # Apply limit if specified
+    if args.limit:
+        df = df.head(args.limit)
+        logger.info(f"Limited to first {args.limit} addresses for testing")
+    
     logger.info(f"Loaded {len(df)} properties to geocode")
 
     # Get the number of available CPU cores (workers)
