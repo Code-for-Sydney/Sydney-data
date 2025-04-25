@@ -177,22 +177,34 @@ def main():
     success_count = 0
     lat_values = []
     lon_values = []
+    unique_addresses = []
 
+    # Use a set to track seen addresses
+    seen_addresses = set()
+    
     for combined_address in combined_addresses:
+        # Skip if we've already seen this address
+        if combined_address in seen_addresses:
+            continue
+            
+        seen_addresses.add(combined_address)
+        unique_addresses.append(combined_address)
+        
         lat, lon = results.get(combined_address, (None, None))
         lat_values.append(lat)
         lon_values.append(lon)
         if lat is not None and lon is not None:
             success_count += 1
 
-    # Create a simplified dataframe with just the combined address and coordinates
+    # Create a simplified dataframe with just the unique combined address and coordinates
     simplified_df = pl.DataFrame({
-        "address": combined_addresses,
+        "address": unique_addresses,
         "lat": lat_values,
         "lon": lon_values
     })
 
-    logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(df)} properties ({success_count/len(df)*100:.2f}%)")
+    logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(unique_addresses)} unique properties ({success_count/len(unique_addresses)*100:.2f}%)")
+    logger.info(f"Removed {len(combined_addresses) - len(unique_addresses)} duplicate addresses")
     simplified_df.write_csv("sydney_property_data_geocoded_no_unit.csv", separator="\t")
     logger.info("Saved geocoded data to sydney_property_data_geocoded_no_unit.csv")
 
