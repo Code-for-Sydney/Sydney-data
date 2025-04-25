@@ -11,9 +11,9 @@ else
     echo "Creating and starting new Redis container '$CONTAINER_NAME'..."
     docker run -d \
         --name $CONTAINER_NAME \
-        -p 6379:6379 \
+        -p 16379:6379 \
         redis:7-alpine \
         redis-server --save 900 1 --loglevel warning
 fi
 
-echo "Redis is now running on localhost:6379"
+echo "Redis is now running on localhost:16379"

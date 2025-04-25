@@ -25,7 +25,7 @@ logger.addHandler(console_handler)
 
 # Redis configuration
 REDIS_HOST = "localhost"
-REDIS_PORT = 6379
+REDIS_PORT = 16379
 REDIS_DB = 0
 CACHE_EXPIRY = 60 * 60 * 24 * 30  # 30 days in seconds
 
@@ -34,6 +34,12 @@ try:
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
     redis_client.ping()  # Test connection
     logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+    
+    # Count and report the number of items in the Redis cache
+    cache_keys = redis_client.keys("geocode:*")
+    cache_count = len(cache_keys)
+    logger.info(f"Redis cache contains {cache_count} geocoded addresses")
+    
 except Exception as e:
     logger.error(f"Failed to connect to Redis at {REDIS_HOST}:{REDIS_PORT}: {e}")
     logger.error("This script requires Redis to be running. Please start Redis and try again.")
