@@ -37,7 +37,38 @@ You need to create a Kaggle account to download the dataset from [here](https://
    ```
    
    This will install dependencies from the `uv.lock` file according to the specifications in `pyproject.toml`.
-4. Setup Nominatim server with Australia's map data:
+
+### Redis Installation
+1. Install Redis using your package manager:
+   ```bash
+   # macOS (using Homebrew)
+   brew install redis
+
+   # Ubuntu/Debian
+   sudo apt-get install redis-server
+
+   # Windows (using WSL2 recommended)
+   sudo apt-get install redis-server
+   ```
+
+2. Start Redis server:
+   ```bash
+   # macOS/Linux
+   redis-server
+
+   # As a service on Ubuntu/Debian
+   sudo systemctl start redis-server
+   ```
+
+3. Verify Redis is running:
+   ```bash
+   redis-cli ping
+   ```
+   Should return "PONG"
+
+### Nominatim Setup
+1. Install Docker if not already installed
+2. Pull and run the Nominatim Docker image with Australia's map data:
    ```bash
    docker run -it \
      -e PBF_URL=https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf \
@@ -46,8 +77,6 @@ You need to create a Kaggle account to download the dataset from [here](https://
      --name nominatim \
      mediagis/nominatim:4.5
    ```
-
-
 
 ## Using the Scripts
 
@@ -68,23 +97,45 @@ If you need to modify the script to include different suburbs or filtering crite
 
 ### 2. Geocoding the Filtered Data
 
-Before geocoding, you need to set up a local Nominatim server:
+The geocoding script uses Redis for caching to improve performance and reduce load on the Nominatim server:
 
-1. Install Docker if not already installed
-2. Pull and run the Nominatim Docker image:
-   ```bash
-   docker run -d --name nominatim -p 8080:8080 mediagis/nominatim:4.2
-   ```
-
-3. Run the geocoding script:
+1. Ensure Redis and Nominatim are running
+2. Run the geocoding script:
    ```bash
    python batch_geocode_local.py
    ```
 
 This will:
 - Read the filtered data from `sydney_property_data.csv`
-- Geocode the addresses using the local Nominatim server
-- Save the results to `sydney_property_data_geocoded.csv` with the address, latitude, and longitude
+- Check Redis cache for previously geocoded addresses
+- Geocode new addresses using the local Nominatim server
+- Cache successful geocoding results in Redis (30-day expiry)
+- Save the results to `sydney_property_data_geocoded_no_unit.csv`
+
+Features:
+- Multi-threaded processing for faster geocoding
+- Automatic unit number stripping for better matches
+- Graceful fallback if Redis is unavailable
+- Progress logging and performance metrics
+
+## Testing
+
+The project includes a comprehensive test suite that verifies:
+- Redis caching functionality
+- Nominatim geocoding
+- Address processing
+- Error handling and fallbacks
+
+Run the tests with:
+```bash
+python -m pytest test_batch_geocode_local.py -v
+```
+
+The tests require:
+- A running Redis instance on localhost:6379
+- A running Nominatim server on localhost:8080
+
+The test suite will automatically skip tests if either service is unavailable.
 
 
 
