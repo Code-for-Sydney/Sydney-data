@@ -155,17 +155,19 @@ def main():
         stripped_address = strip_unit(address)
         stripped_addresses.append(f"{stripped_address} {str(row['post_code'])}")
     
+    # Remove duplicates before geocoding
+    logger.info("Removing duplicate addresses...")
+    unique_addresses = list(set(stripped_addresses))
+    logger.info(f"Removed {len(stripped_addresses) - len(unique_addresses)} duplicate addresses")
+    logger.info(f"Prepared {len(unique_addresses)} unique addresses for geocoding")
+
     # Get the number of available CPU cores (workers)
     num_workers = os.cpu_count() or 4
     logger.info(f"Using {num_workers} workers for parallel geocoding")
 
-    # Prepare data with stripped addresses
-    combined_addresses = stripped_addresses
-    logger.info(f"Prepared {len(combined_addresses)} addresses for geocoding")
-
-    # Create a thread-safe queue and populate it with addresses
+    # Create a thread-safe queue and populate it with unique addresses
     address_queue = queue.Queue()
-    for addr in combined_addresses:
+    for addr in unique_addresses:
         address_queue.put(addr)
 
     # Create results dictionary with lock for thread safety
@@ -174,9 +176,9 @@ def main():
 
     # Create and start worker threads
     threads = []
-    total_addresses = len(combined_addresses)
+    total_addresses = len(unique_addresses)
     start_time = time.time()
-    logger.info(f"Starting geocoding of {total_addresses} addresses with {num_workers} workers")
+    logger.info(f"Starting geocoding of {total_addresses} unique addresses with {num_workers} workers")
 
     for _ in range(num_workers):
         thread = threading.Thread(
@@ -200,19 +202,8 @@ def main():
     success_count = 0
     lat_values = []
     lon_values = []
-    unique_addresses = []
-
-    # Use a set to track seen addresses
-    seen_addresses = set()
     
-    for combined_address in combined_addresses:
-        # Skip if we've already seen this address
-        if combined_address in seen_addresses:
-            continue
-            
-        seen_addresses.add(combined_address)
-        unique_addresses.append(combined_address)
-        
+    for combined_address in unique_addresses:
         lat, lon = results.get(combined_address, (None, None))
         lat_values.append(lat)
         lon_values.append(lon)
@@ -227,7 +218,6 @@ def main():
     })
 
     logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(unique_addresses)} unique properties ({success_count/len(unique_addresses)*100:.2f}%)")
-    logger.info(f"Removed {len(combined_addresses) - len(unique_addresses)} duplicate addresses")
     simplified_df.write_csv("sydney_property_data_geocoded_no_unit.csv", separator="\t")
     logger.info("Saved geocoded data to sydney_property_data_geocoded_no_unit.csv")
 
