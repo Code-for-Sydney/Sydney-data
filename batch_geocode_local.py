@@ -270,6 +270,11 @@ def main():
         "lat": lat_values,
         "lon": lon_values
     })
+    
+    # Drop rows where lat or lon is None
+    simplified_df = simplified_df.filter(
+        (pl.col("lat").is_not_null()) & (pl.col("lon").is_not_null())
+    )
 
     logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(unique_addresses)} unique properties ({success_count/len(unique_addresses)*100:.2f}%)")
     simplified_df.write_csv("sydney_property_data_geocoded_no_unit.csv", separator="\t")
