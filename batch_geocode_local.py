@@ -9,6 +9,7 @@ import sys
 import json
 import redis
 import argparse
+from datetime import datetime
 
 from addr_utils import strip_unit
 
@@ -108,7 +109,7 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
         logger.error(f"Exception during geocoding {combined_address}: {str(e)}")
         return combined_address, (None, None)
 
-def worker(address_queue, results_dict, results_lock, base_url="http://localhost:8080"):
+def worker(address_queue, results_dict, results_lock, progress_counter, base_url="http://localhost:8080"):
     """Worker function that processes addresses from a queue."""
     local_session = requests.Session()
     while True:
@@ -120,6 +121,8 @@ def worker(address_queue, results_dict, results_lock, base_url="http://localhost
             # Store the result in the shared results dictionary
             with results_lock:
                 results_dict[address_key] = coords
+                # Increment the progress counter
+                progress_counter['count'] += 1
             # Mark the task as done
             address_queue.task_done()
         except queue.Empty:
@@ -129,6 +132,38 @@ def worker(address_queue, results_dict, results_lock, base_url="http://localhost
             logger.error(f"Error processing address: {str(e)}")
             # Ensure task is marked as done even in case of error
             address_queue.task_done()
+
+def progress_reporter(progress_counter, total_addresses, stop_event):
+    """Report progress at regular intervals."""
+    last_count = 0
+    last_time = time.time()
+    
+    while not stop_event.is_set():
+        time.sleep(10)  # Report every 10 seconds
+        
+        with progress_counter['lock']:
+            current_count = progress_counter['count']
+            current_time = time.time()
+            
+            # Calculate progress percentage and rate
+            progress_percent = (current_count / total_addresses) * 100
+            time_diff = current_time - last_time
+            count_diff = current_count - last_count
+            
+            if time_diff > 0:
+                rate = count_diff / time_diff
+                eta_seconds = (total_addresses - current_count) / rate if rate > 0 else 0
+                eta_str = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
+            else:
+                rate = 0
+                eta_str = "N/A"
+            
+            # Log progress
+            logger.info(f"Progress: {current_count}/{total_addresses} ({progress_percent:.2f}%) - Rate: {rate:.2f} addr/sec - ETA: {eta_str}")
+            
+            # Update last values
+            last_count = current_count
+            last_time = current_time
 
 def main():
     """Main function to run the geocoding process."""
@@ -173,6 +208,20 @@ def main():
     # Create results dictionary with lock for thread safety
     results = {}
     results_lock = threading.Lock()
+    
+    # Create a progress counter with a lock
+    progress_counter = {'count': 0, 'lock': threading.Lock()}
+    
+    # Create a stop event for the progress reporter
+    stop_event = threading.Event()
+
+    # Start the progress reporter thread
+    progress_thread = threading.Thread(
+        target=progress_reporter,
+        args=(progress_counter, len(unique_addresses), stop_event)
+    )
+    progress_thread.daemon = True
+    progress_thread.start()
 
     # Create and start worker threads
     threads = []
@@ -183,7 +232,7 @@ def main():
     for _ in range(num_workers):
         thread = threading.Thread(
             target=worker,
-            args=(address_queue, results, results_lock, "http://localhost:8080")
+            args=(address_queue, results, results_lock, progress_counter, "http://localhost:8080")
         )
         thread.daemon = True
         thread.start()
@@ -193,6 +242,11 @@ def main():
     logger.info("Processing addresses...")
     address_queue.join()
     logger.info("All addresses processed")
+    
+    # Stop the progress reporter
+    stop_event.set()
+    progress_thread.join(timeout=1)
+    
     elapsed_time = time.time() - start_time
     logger.info(f"Total processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
     addresses_per_second = total_addresses / elapsed_time if elapsed_time > 0 else 0
