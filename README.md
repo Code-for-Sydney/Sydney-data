@@ -85,7 +85,7 @@ You need to create a Kaggle account to download the dataset from [here](https://
 First, filter the raw Kaggle dataset to extract only properties in Sydney suburbs:
 
 ```bash
-python filter.py
+uv run filter.py
 ```
 
 The script:
@@ -99,14 +99,53 @@ If you need to modify the script to include different suburbs or filtering crite
 
 The geocoding script uses Redis for caching to improve performance and reduce load on the Nominatim server:
 
-1. Ensure Redis and Nominatim are running
-2. Run the geocoding script:
-   ```bash
-   python batch_geocode_local.py
-   ```
+```bash
+uv run batch_geocode_local.py input.csv output.csv [OPTIONS]
+```
 
-This will:
-- Read the filtered data from `sydney_property_data.csv`
+Required arguments:
+- `input.csv`: Path to the input CSV file containing addresses
+- `output.csv`: Path where the geocoded data will be saved
+
+Options:
+- `--limit N`: Limit the number of addresses to process (for testing)
+- `--redis-host HOST`: Redis host (default: localhost)
+- `--redis-port PORT`: Redis port (default: 16379)
+- `--redis-db DB`: Redis database number (default: 0)
+- `--cache-expiry SECONDS`: Cache expiry in seconds (default: 30 days)
+- `--nominatim-url URL`: Nominatim server URL (default: http://localhost:8080)
+- `--country-code CODE`: Country code for geocoding (default: au)
+- `--state STATE`: State/province for geocoding (default: NSW)
+- `--address-column COLUMN`: Name of the address column in the input file (default: address)
+- `--postcode-column COLUMN`: Name of the postcode column in the input file (default: post_code)
+- `--separator SEP`: Input file separator (default: tab)
+
+Example:
+```bash
+# Basic usage with default options
+uv run batch_geocode_local.py sydney_property_data.csv sydney_property_data_geocoded.csv
+
+# Custom Redis configuration
+uv run batch_geocode_local.py sydney_property_data.csv sydney_property_data_geocoded.csv \
+  --redis-host redis.example.com \
+  --redis-port 6379 \
+  --redis-db 1
+
+# Custom geocoding parameters
+uv run batch_geocode_local.py sydney_property_data.csv sydney_property_data_geocoded.csv \
+  --country-code nz \
+  --state "Auckland Region" \
+  --nominatim-url http://nominatim.example.com:8080
+
+# Custom file format
+uv run batch_geocode_local.py data.csv output.csv \
+  --address-column street_address \
+  --postcode-column zip \
+  --separator ","
+```
+
+The script:
+- Reads the filtered data from `sydney_property_data.csv`
 - Check Redis cache for previously geocoded addresses
 - Geocode new addresses using the local Nominatim server
 - Cache successful geocoding results in Redis (30-day expiry)
@@ -128,7 +167,7 @@ The project includes a comprehensive test suite that verifies:
 
 Run the tests with:
 ```bash
-python -m pytest test_batch_geocode_local.py -v
+uv run -m pytest test_batch_geocode_local.py -v
 ```
 
 The tests require:

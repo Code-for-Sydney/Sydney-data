@@ -8,7 +8,7 @@ import time
 import sys
 import json
 import redis
-import argparse
+import click
 from datetime import datetime
 
 from addr_utils import strip_unit
@@ -24,29 +24,25 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-# Redis configuration
-REDIS_HOST = "localhost"
-REDIS_PORT = 16379
-REDIS_DB = 0
-CACHE_EXPIRY = 60 * 60 * 24 * 30  # 30 days in seconds
+def init_redis(host, port, db):
+    """Initialize Redis connection with the given parameters."""
+    try:
+        redis_client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        redis_client.ping()  # Test connection
+        logger.info(f"Connected to Redis at {host}:{port}")
+        
+        # Count and report the number of items in the Redis cache
+        cache_keys = redis_client.keys("geocode:*")
+        cache_count = len(cache_keys)
+        logger.info(f"Redis cache contains {cache_count} geocoded addresses")
+        
+        return redis_client
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis at {host}:{port}: {e}")
+        logger.error("This script requires Redis to be running. Please start Redis and try again.")
+        sys.exit(1)
 
-# Initialize Redis connection
-try:
-    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
-    redis_client.ping()  # Test connection
-    logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-    
-    # Count and report the number of items in the Redis cache
-    cache_keys = redis_client.keys("geocode:*")
-    cache_count = len(cache_keys)
-    logger.info(f"Redis cache contains {cache_count} geocoded addresses")
-    
-except Exception as e:
-    logger.error(f"Failed to connect to Redis at {REDIS_HOST}:{REDIS_PORT}: {e}")
-    logger.error("This script requires Redis to be running. Please start Redis and try again.")
-    sys.exit(1)
-
-def get_cached_coordinates(address):
+def get_cached_coordinates(redis_client, address):
     """Get cached coordinates from Redis if available."""
     try:
         cached_data = redis_client.get(f"geocode:{address}")
@@ -60,7 +56,7 @@ def get_cached_coordinates(address):
     
     return None
 
-def cache_coordinates(address, lat, lon):
+def cache_coordinates(redis_client, address, lat, lon, cache_expiry):
     """Cache coordinates in Redis."""
     if lat is None or lon is None:
         return
@@ -68,7 +64,7 @@ def cache_coordinates(address, lat, lon):
     try:
         redis_client.setex(
             f"geocode:{address}",
-            CACHE_EXPIRY,
+            cache_expiry,
             json.dumps([lat, lon])
         )
         logger.debug(f"Cached coordinates for {address}")
@@ -76,17 +72,17 @@ def cache_coordinates(address, lat, lon):
         logger.error(f"Error caching coordinates: {e}")
         raise  # Re-raise the exception to fail fast
 
-def geocode_address(combined_address:str, session:requests.Session, base_url="http://localhost:8080"):
+def geocode_address(combined_address:str, session:requests.Session, redis_client, cache_expiry, base_url="http://localhost:8080", country_code="au", state="NSW"):
     """Geocode a single address using local Nominatim."""
     # Check cache first
-    cached_coords = get_cached_coordinates(combined_address)
+    cached_coords = get_cached_coordinates(redis_client, combined_address)
     if cached_coords:
         return combined_address, cached_coords
     
     params = {
-        'q': combined_address + ", NSW, Australia",  # Add NSW (New South Wales) to the query
+        'q': f"{combined_address}, {state}, Australia",  # Add state to the query
         'format': 'json',
-        'countrycodes': 'au',  # Limit to Australia
+        'countrycodes': country_code,  # Limit to specified country
         'limit': 1  # Just get the top result
     }
     
@@ -97,7 +93,7 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
             if results and len(results) > 0:
                 lat, lon = float(results[0]['lat']), float(results[0]['lon'])
                 # Cache the successful result
-                cache_coordinates(combined_address, lat, lon)
+                cache_coordinates(redis_client, combined_address, lat, lon, cache_expiry)
                 return combined_address, (lat, lon)
             else:
                 pass
@@ -109,7 +105,7 @@ def geocode_address(combined_address:str, session:requests.Session, base_url="ht
         logger.error(f"Exception during geocoding {combined_address}: {str(e)}")
         return combined_address, (None, None)
 
-def worker(address_queue, results_dict, results_lock, progress_counter, base_url="http://localhost:8080"):
+def worker(address_queue, results_dict, results_lock, progress_counter, redis_client, cache_expiry, base_url="http://localhost:8080", country_code="au", state="NSW"):
     """Worker function that processes addresses from a queue."""
     local_session = requests.Session()
     while True:
@@ -117,7 +113,7 @@ def worker(address_queue, results_dict, results_lock, progress_counter, base_url
             # Get the next address from the queue (non-blocking)
             combined_address = address_queue.get_nowait()
             # Process the address
-            address_key, coords = geocode_address(combined_address, local_session, base_url)
+            address_key, coords = geocode_address(combined_address, local_session, redis_client, cache_expiry, base_url, country_code, state)
             # Store the result in the shared results dictionary
             with results_lock:
                 results_dict[address_key] = coords
@@ -165,20 +161,39 @@ def progress_reporter(progress_counter, total_addresses, stop_event):
             last_count = current_count
             last_time = current_time
 
-def main():
-    """Main function to run the geocoding process."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Geocode addresses from a CSV file.')
-    parser.add_argument('--limit', type=int, help='Limit the number of addresses to process (for testing)')
-    args = parser.parse_args()
-
+@click.command()
+@click.argument('input_file', type=click.Path(exists=True))
+@click.argument('output_file', type=click.Path())
+@click.option('--limit', type=int, help='Limit the number of addresses to process (for testing)')
+@click.option('--redis-host', default='localhost', help='Redis host')
+@click.option('--redis-port', default=16379, help='Redis port')
+@click.option('--redis-db', default=0, help='Redis database number')
+@click.option('--cache-expiry', default=60*60*24*30, help='Cache expiry in seconds (default: 30 days)')
+@click.option('--nominatim-url', default='http://localhost:8080', help='Nominatim server URL')
+@click.option('--country-code', default='au', help='Country code for geocoding')
+@click.option('--state', default='NSW', help='State/province for geocoding')
+@click.option('--address-column', default='address', help='Name of the address column in the input file')
+@click.option('--postcode-column', default='post_code', help='Name of the postcode column in the input file')
+@click.option('--separator', default='\t', help='Input file separator')
+def main(input_file, output_file, limit, redis_host, redis_port, redis_db, cache_expiry, 
+         nominatim_url, country_code, state, address_column, postcode_column, separator):
+    """Geocode addresses from a CSV file using local Nominatim server.
+    
+    INPUT_FILE: Path to the input CSV file containing addresses
+    OUTPUT_FILE: Path where the geocoded data will be saved
+    """
     logger.info("Starting geocoding process")
-    df = pl.read_csv("large-files/sydney_property_data.csv", truncate_ragged_lines=True, separator="\t")
+    
+    # Initialize Redis connection
+    redis_client = init_redis(redis_host, redis_port, redis_db)
+    
+    # Read input file
+    df = pl.read_csv(input_file, truncate_ragged_lines=True, separator=separator)
     
     # Apply limit if specified
-    if args.limit:
-        df = df.head(args.limit)
-        logger.info(f"Limited to first {args.limit} addresses for testing")
+    if limit:
+        df = df.head(limit)
+        logger.info(f"Limited to first {limit} addresses for testing")
     
     logger.info(f"Loaded {len(df)} properties to geocode")
 
@@ -186,9 +201,9 @@ def main():
     logger.info("Stripping unit numbers from addresses...")
     stripped_addresses = []
     for row in df.iter_rows(named=True):
-        address = row['address']
+        address = row[address_column]
         stripped_address = strip_unit(address)
-        stripped_addresses.append(f"{stripped_address} {str(row['post_code'])}")
+        stripped_addresses.append(f"{stripped_address} {str(row[postcode_column])}")
     
     # Remove duplicates before geocoding
     logger.info("Removing duplicate addresses...")
@@ -232,7 +247,8 @@ def main():
     for _ in range(num_workers):
         thread = threading.Thread(
             target=worker,
-            args=(address_queue, results, results_lock, progress_counter, "http://localhost:8080")
+            args=(address_queue, results, results_lock, progress_counter, redis_client, cache_expiry, 
+                  nominatim_url, country_code, state)
         )
         thread.daemon = True
         thread.start()
@@ -277,8 +293,8 @@ def main():
     )
 
     logger.info(f"Geocoding complete. Successfully geocoded {success_count}/{len(unique_addresses)} unique properties ({success_count/len(unique_addresses)*100:.2f}%)")
-    simplified_df.write_csv("sydney_property_data_geocoded_no_unit.csv", separator="\t")
-    logger.info("Saved geocoded data to sydney_property_data_geocoded_no_unit.csv")
+    simplified_df.write_csv(output_file, separator=separator)
+    logger.info(f"Saved geocoded data to {output_file}")
 
 if __name__ == "__main__":
     main()
