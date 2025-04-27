@@ -6,7 +6,8 @@ GIS project on Analysing real estate market.
 
 You need to create a Kaggle account to download the dataset from [here](https://www.kaggle.com/datasets/josephcheng123456/nsw-australia-property-data).
 
-## Installation
+<details>
+<summary><strong>Installation</strong></summary>
 
 ### Python 3.13
 1. Download Python 3.13 from the [official Python website](https://www.python.org/downloads/)
@@ -18,7 +19,7 @@ You need to create a Kaggle account to download the dataset from [here](https://
    ```bash
    curl -fsSL https://raw.githubusercontent.com/astral-sh/uv/main/install.sh | bash
    ```
-   
+
    Or on Windows:
    ```bash
    powershell -c "irm https://raw.githubusercontent.com/astral-sh/uv/main/install.ps1 | iex"
@@ -35,8 +36,6 @@ You need to create a Kaggle account to download the dataset from [here](https://
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    uv sync
    ```
-   
-   This will install dependencies from the `uv.lock` file according to the specifications in `pyproject.toml`.
 
 ### Redis Installation
 1. Install Redis using your package manager:
@@ -77,8 +76,10 @@ You need to create a Kaggle account to download the dataset from [here](https://
      --name nominatim \
      mediagis/nominatim:4.5
    ```
+</details>
 
-## Using the Scripts
+<details>
+<summary><strong>Using the Scripts</strong></summary>
 
 ### 1. Filtering the Dataset
 
@@ -146,10 +147,10 @@ uv run batch_geocode_local.py data.csv output.csv \
 
 The script:
 - Reads the filtered data from `sydney_property_data.csv`
-- Check Redis cache for previously geocoded addresses
-- Geocode new addresses using the local Nominatim server
-- Cache successful geocoding results in Redis (30-day expiry)
-- Save the results to `sydney_property_data_geocoded_no_unit.csv`
+- Checks Redis cache for previously geocoded addresses
+- Geocodes new addresses using the local Nominatim server
+- Caches successful geocoding results in Redis (30-day expiry)
+- Saves the results to `sydney_property_data_geocoded_no_unit.csv`
 
 Features:
 - Multi-threaded processing for faster geocoding
@@ -157,7 +158,10 @@ Features:
 - Graceful fallback if Redis is unavailable
 - Progress logging and performance metrics
 
-## Testing
+</details>
+
+<details>
+<summary><strong>Testing</strong></summary>
 
 The project includes a comprehensive test suite that verifies:
 - Redis caching functionality
@@ -176,6 +180,5 @@ The tests require:
 
 The test suite will automatically skip tests if either service is unavailable.
 
-
-
+</details>
 
